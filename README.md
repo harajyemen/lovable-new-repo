@@ -1,28 +1,26 @@
-# Visual Assist
+# Visual Assist — أقوى نظام كشف بصري محلي (Offline)
 
-أداة مساعدة بصرية حية تعمل بالذكاء الاصطناعي المحلي على أجهزة Android. تلتقط
-الشاشة لحظياً، تكتشف الأجسام السريعة/البعيدة في الألعاب، وترسم مربعات
-فوسفورية عالية التباين لمساعدة المستخدمين على التتبّع البصري.
+تطبيق أندرويد مفتوح المصدر يساعد ضعاف البصر عبر طبقة عرض شفافة فوق الشاشة تُحدّد الأهداف
+وتتعقّبها في الوقت الفعلي — بدون إنترنت.
 
-## المكوّنات
-- `main.py` — واجهة Kivy + تدفّق الصلاحيات الحتمي.
-- `offline_engine.py` — كشف + تتبّع KCF + Kalman للتنبؤ بالمسار.
-- `overlay.py` — طبقة عرض شفافة فوق التطبيقات.
-- `service.py` — Foreground Service مع إشعار دائم.
-- `buildozer.spec` — إعدادات بناء APK (arm64-v8a، API 33).
-- `.github/workflows/android_build.yml` — بناء تلقائي على GitHub Actions.
+## المحرك (الأقوى)
+- **كاشف:** YOLOv8n ONNX عبر OpenCV DNN
+- **استدلال مقسّم (SAHI-like):** بلاطات 640×640 بتداخل 25% لاكتشاف الأهداف الصغيرة جداً
+- **تحسين الصورة:** CLAHE + Unsharp Mask + ESPCN ×2 Super-Resolution للمدى البعيد
+- **تتبّع متعدد الأهداف:** ByteTrack-like + Kalman Filter (constant velocity)
+- **TTA اختياري:** flip augmentation لرفع الاسترجاع
+- **NMS هجين:** per-class + class-agnostic
 
-## النموذج
-ضع ملفات الكشف داخل `assets/model/`:
-- `yolov4-tiny.cfg`
-- `yolov4-tiny.weights`
-- `coco.names`
+## ملفات النماذج المطلوبة (ضعها في جذر المشروع قبل البناء)
+- `yolov8n.onnx` — صدّره من Ultralytics:
+  ```bash
+  pip install ultralytics
+  yolo export model=yolov8n.pt format=onnx imgsz=640 opset=12
+  ```
+- `espcn_x2.pb` (اختياري للمدى البعيد) — من OpenCV Zoo.
 
-## البناء محلياً
-```bash
-pip install buildozer cython
-buildozer -v android debug
-```
+## البناء التلقائي
+ادفع إلى `main` وسيُنتج GitHub Actions حزمة APK في `bin/*.apk` (Artifact).
 
-## CI
-يتم بناء APK تلقائياً على كل push للفرع `main` وإتاحته كـ artifact.
+## الترخيص
+MIT.

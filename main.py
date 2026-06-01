@@ -1,133 +1,90 @@
+# -*- coding: utf-8 -*-
 """
-Visual Assist - نقطة الإقلاع الآمن
-واجهة Kivy بسيطة + طلب الصلاحيات الحتمية (Media Projection, Overlay, Storage, Foreground Service).
-لا ينهار التطبيق إذا رفض المستخدم — يبقى في حالة انتظار مع رسالة توجيهية.
+Visual Assist - Main UI (Kivy)
+- يطلب صلاحيات Android (SYSTEM_ALERT_WINDOW, FOREGROUND_SERVICE, MediaProjection)
+- لا ينهار في حالة الرفض، يعرض رسالة واضحة.
 """
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.label import Label
 from kivy.uix.button import Button
+from kivy.uix.label import Label
+from kivy.uix.floatlayout import FloatLayout
 from kivy.clock import Clock
-from kivy.utils import platform
 
-REQUIRED_PERMS = []
-if platform == "android":
-    from android.permissions import (
-        request_permissions, check_permission, Permission
-    )
-    REQUIRED_PERMS = [
-        Permission.FOREGROUND_SERVICE,
-        Permission.SYSTEM_ALERT_WINDOW,
-        Permission.READ_EXTERNAL_STORAGE,
-        Permission.WRITE_EXTERNAL_STORAGE,
-        Permission.POST_NOTIFICATIONS,
-    ]
+from overlay import Overlay
+from service import DetectionService
+
+import numpy as np
+
+IS_ANDROID = False
+try:
+    from android.permissions import request_permissions, Permission  # type: ignore
+    from jnius import autoclass  # type: ignore
+    IS_ANDROID = True
+except Exception:
+    pass
 
 
-class RootUI(BoxLayout):
+def dummy_frame():
+    # placeholder بإطار اختباري للديسكتوب
+    img = (np.random.rand(480, 640, 3) * 255).astype(np.uint8)
+    return img
+
+
+class Root(FloatLayout):
     def __init__(self, **kw):
-        super().__init__(orientation="vertical", padding=24, spacing=16, **kw)
-        self.status = Label(
-            text="مرحباً بك\nاضغط بدء لمنح الصلاحيات وتشغيل المساعد البصري",
-            halign="center", valign="middle", font_size=18,
-        )
-        self.status.bind(size=lambda *_: setattr(
-            self.status, "text_size", self.status.size))
-        self.btn_start = Button(text="بدء المساعد البصري", size_hint_y=None, height=64)
-        self.btn_start.bind(on_release=self.on_start)
-        self.btn_overlay = Button(text="منح صلاحية العرض فوق التطبيقات",
-                                  size_hint_y=None, height=56)
-        self.btn_overlay.bind(on_release=self.request_overlay)
-        self.btn_projection = Button(text="منح صلاحية التقاط الشاشة",
-                                     size_hint_y=None, height=56)
-        self.btn_projection.bind(on_release=self.request_projection)
+        super().__init__(**kw)
+        self.overlay = Overlay(size_hint=(1, 1))
+        self.add_widget(self.overlay)
 
-        self.add_widget(self.status)
-        self.add_widget(self.btn_overlay)
-        self.add_widget(self.btn_projection)
-        self.add_widget(self.btn_start)
+        bar = BoxLayout(orientation="horizontal", size_hint=(1, None), height=72,
+                        pos_hint={"x": 0, "y": 0}, padding=8, spacing=8)
+        self.status = Label(text="Visual Assist — جاهز", color=(0.9,1,0.95,1))
+        self.btn_toggle = Button(text="ابدأ", on_release=self.toggle)
+        self.btn_lr     = Button(text="مدى بعيد: OFF", on_release=self.toggle_lr)
+        bar.add_widget(self.status); bar.add_widget(self.btn_lr); bar.add_widget(self.btn_toggle)
+        self.add_widget(bar)
 
-    # --- Permissions flow ---
-    def request_runtime_perms(self, cb):
-        if platform != "android":
-            cb(True); return
-        missing = [p for p in REQUIRED_PERMS if not check_permission(p)]
-        if not missing:
-            cb(True); return
+        self.service = DetectionService(frame_source=dummy_frame, overlay=self.overlay)
+        Clock.schedule_once(self._request_perms, 0.5)
 
-        def _result(perms, grants):
-            cb(all(grants))
-        request_permissions(missing, _result)
-
-    def request_overlay(self, *_):
-        if platform != "android":
-            self.set_status("Overlay (محاكاة سطح المكتب) ✔"); return
-        try:
-            from jnius import autoclass
-            Intent = autoclass("android.content.Intent")
-            Settings = autoclass("android.provider.Settings")
-            Uri = autoclass("android.net.Uri")
-            PythonActivity = autoclass("org.kivy.android.PythonActivity")
-            act = PythonActivity.mActivity
-            intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:" + act.getPackageName()))
-            act.startActivity(intent)
-            self.set_status("افتح الإعدادات وفعّل العرض فوق التطبيقات، ثم عد للتطبيق.")
-        except Exception as e:
-            self.set_status(f"تعذّر فتح إعدادات الـ Overlay:\n{e}")
-
-    def request_projection(self, *_):
-        """يفتح حوار MediaProjection الرسمي عبر الخدمة."""
-        if platform != "android":
-            self.set_status("MediaProjection (محاكاة) ✔"); return
-        try:
-            from jnius import autoclass
-            Intent = autoclass("android.content.Intent")
-            PythonActivity = autoclass("org.kivy.android.PythonActivity")
-            act = PythonActivity.mActivity
-            # سيتم التقاط الحوار من جانب Java/Service لاحقاً.
-            # هنا نطلب من المستخدم تأكيد الصلاحية ثم نشغّل الخدمة.
-            self.set_status("سيتم طلب إذن التقاط الشاشة عند بدء التشغيل.")
-        except Exception as e:
-            self.set_status(f"خطأ: {e}")
-
-    def on_start(self, *_):
-        self.set_status("جاري طلب الصلاحيات...")
-
-        def after(ok):
-            if not ok:
-                self.set_status(
-                    "لم تُمنح كل الصلاحيات.\nسأنتظر — افتح الإعدادات وامنحها ثم اضغط بدء مجدداً."
-                )
-                return
-            self.start_service()
-        self.request_runtime_perms(after)
-
-    def start_service(self):
-        self.set_status("تم منح الصلاحيات. تشغيل الخدمة الخلفية...")
-        if platform != "android":
+    def _request_perms(self, *_):
+        if not IS_ANDROID:
+            self.status.text = "وضع المعاينة (ديسكتوب)"
             return
         try:
-            from jnius import autoclass
-            service = autoclass(
-                "org.visualassist.app.ServiceVisualassist"
-            )
-            mActivity = autoclass("org.kivy.android.PythonActivity").mActivity
-            argument = ""
-            service.start(mActivity, argument)
-            self.set_status("الخدمة تعمل في الخلفية ✔\nابدأ اللعبة الآن.")
+            request_permissions([
+                Permission.FOREGROUND_SERVICE,
+                Permission.POST_NOTIFICATIONS,
+                Permission.READ_MEDIA_IMAGES,
+                Permission.RECORD_AUDIO,
+            ], self._after_perms)
         except Exception as e:
-            self.set_status(f"تعذّر تشغيل الخدمة:\n{e}")
+            self.status.text = f"تعذر طلب الصلاحيات: {e}"
 
-    def set_status(self, msg):
-        Clock.schedule_once(lambda *_: setattr(self.status, "text", msg), 0)
+    def _after_perms(self, perms, grants):
+        ok = all(grants) if grants else False
+        self.status.text = "تم منح الصلاحيات" if ok else "بعض الصلاحيات مرفوضة — يعمل بقيود"
+
+    def toggle(self, *_):
+        if self.service.running:
+            self.service.stop()
+            self.btn_toggle.text = "ابدأ"
+            self.status.text = "متوقف"
+        else:
+            self.service.start()
+            self.btn_toggle.text = "إيقاف"
+            self.status.text = "يعمل — كشف مباشر"
+
+    def toggle_lr(self, *_):
+        on = self.service.toggle_long_range()
+        self.btn_lr.text = f"مدى بعيد: {'ON' if on else 'OFF'}"
 
 
 class VisualAssistApp(App):
-    title = "Visual Assist"
-
     def build(self):
-        return RootUI()
+        self.title = "Visual Assist"
+        return Root()
 
 
 if __name__ == "__main__":
