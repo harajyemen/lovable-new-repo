@@ -43,12 +43,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install --upgrade buildozer cython==0.29.36 virtualenv
 
-      # تحميل الموديل باستخدام wget لضمان الموثوقية
       - name: Download Model from Drive
         run: |
           wget --no-check-certificate -O yolov8n.onnx "https://drive.google.com/uc?export=download&id=1EC4jcyO55ES37czrw3_W7XZMHS3qsReV"
 
-      - name: Install Android SDK cmdline-tools + NDK 25
+      - name: Install Android SDK & Accept Licenses
         run: |
           set -e
           sudo mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
@@ -56,7 +55,13 @@ jobs:
           curl -fsSL -o cmdline.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
           unzip -q cmdline.zip -d cmdline
           sudo mv cmdline/cmdline-tools $ANDROID_SDK_ROOT/cmdline-tools/latest
-          yes | sudo $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null || true
+          
+          # إنشاء مجلد الرخص والموافقة التلقائية
+          sudo mkdir -p $ANDROID_SDK_ROOT/licenses
+          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" | sudo tee $ANDROID_SDK_ROOT/licenses/android-sdk-license
+          echo "d56f51874737515e191354c5e3b747370b682a50" | sudo tee $ANDROID_SDK_ROOT/licenses/android-sdk-preview-license
+          
+          # تثبيت الأدوات
           sudo $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
               "platform-tools" \
               "platforms;android-33" \
@@ -77,6 +82,8 @@ jobs:
           ANDROIDAPI: "33"
           ANDROIDMINAPI: "24"
         run: |
+          # التأكد من إعداد المسارات قبل التشغيل
+          export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH
           yes | buildozer -v android debug
 
       - name: Upload APK
