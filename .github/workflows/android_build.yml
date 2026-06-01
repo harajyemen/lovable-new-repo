@@ -38,12 +38,17 @@ jobs:
             libncurses5-dev libncursesw5-dev libtinfo5 \
             cmake libffi-dev libssl-dev
 
-      - name: Install Buildozer + Cython
+      - name: Install Buildozer + Cython + gdown
         run: |
           python -m pip install --upgrade pip
-          pip install --upgrade buildozer cython==0.29.36 virtualenv
+          pip install --upgrade buildozer cython==0.29.36 virtualenv gdown
 
-      - name: Install Android SDK cmdline-tools + NDK 25 (pre-fetch لمنع التعليق عند 41%)
+      # خطوة تحميل الموديل من جوجل درايف
+      - name: Download Model from Drive
+        run: |
+          gdown --id 1EC4jcyO55ES37czrw3_W7XZMHS3qsReV -O yolov8n.onnx
+
+      - name: Install Android SDK cmdline-tools + NDK 25
         run: |
           set -e
           sudo mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
