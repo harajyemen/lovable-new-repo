@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     env:
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
       ANDROID_HOME:     /usr/local/lib/android/sdk
@@ -35,17 +35,29 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential git zip unzip openjdk-17-jdk \
             autoconf automake libtool pkg-config zlib1g-dev \
-            libncurses5-dev libncursesw5-dev libtinfo5 \
-            cmake libffi-dev libssl-dev
+            libncurses-dev cmake libffi-dev libssl-dev ccache
+          # libtinfo5 shim (needed by aidl on 22.04)
+          wget -q http://launchpadlibrarian.net/648013231/libtinfo5_6.4-2_amd64.deb || \
+            wget -q http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.1_amd64.deb -O libtinfo5.deb
+          sudo dpkg -i libtinfo5*.deb || sudo apt-get -f install -y
 
-      - name: Install Buildozer + Cython
+      - name: Install Buildozer + Cython + gdown
         run: |
           python -m pip install --upgrade pip
-          pip install --upgrade buildozer cython==0.29.36 virtualenv
+          pip install --upgrade buildozer cython==0.29.36 virtualenv gdown
 
-      - name: Download Model from Drive
+      - name: Download YOLOv8n ONNX Model
         run: |
-          wget --no-check-certificate -O yolov8n.onnx "https://drive.google.com/uc?export=download&id=1EC4jcyO55ES37czrw3_W7XZMHS3qsReV"
+          set -e
+          gdown --fuzzy "https://drive.google.com/uc?export=download&id=1EC4jcyO55ES37czrw3_W7XZMHS3qsReV" -O yolov8n.onnx || true
+          if [ ! -s yolov8n.onnx ] || [ "$(stat -c%s yolov8n.onnx)" -lt 1000000 ]; then
+            echo "Drive download failed/too small, falling back to ultralytics release"
+            rm -f yolov8n.onnx
+            pip install --quiet ultralytics onnx onnxruntime
+            python -c "from ultralytics import YOLO; YOLO('yolov8n.pt').export(format='onnx', imgsz=640)"
+            mv yolov8n.onnx yolov8n.onnx 2>/dev/null || true
+          fi
+          ls -lh yolov8n.onnx
 
       - name: Install Android SDK & Accept Licenses
         run: |
@@ -54,25 +66,27 @@ jobs:
           cd /tmp
           curl -fsSL -o cmdline.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
           unzip -q cmdline.zip -d cmdline
+          sudo rm -rf $ANDROID_SDK_ROOT/cmdline-tools/latest
           sudo mv cmdline/cmdline-tools $ANDROID_SDK_ROOT/cmdline-tools/latest
-          
-          # إنشاء مجلد الرخص والموافقة التلقائية
-          sudo mkdir -p $ANDROID_SDK_ROOT/licenses
-          echo "8933bad161af4178b1185d1a37fbf41ea5269c55" | sudo tee $ANDROID_SDK_ROOT/licenses/android-sdk-license
-          echo "d56f51874737515e191354c5e3b747370b682a50" | sudo tee $ANDROID_SDK_ROOT/licenses/android-sdk-preview-license
-          
-          # تثبيت الأدوات
-          sudo $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
+          sudo chown -R $USER:$USER $ANDROID_SDK_ROOT
+          mkdir -p $ANDROID_SDK_ROOT/licenses
+          printf "8933bad161af4178b1185d1a37fbf41ea5269c55\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n" > $ANDROID_SDK_ROOT/licenses/android-sdk-license
+          printf "84831b9409646a918e30573bab4c9c91346d8abd\n" > $ANDROID_SDK_ROOT/licenses/android-sdk-preview-license
+          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null || true
+          $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
               "platform-tools" \
               "platforms;android-33" \
               "build-tools;33.0.2" \
               "ndk;25.2.9519653" >/dev/null
-          echo "PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH" >> $GITHUB_ENV
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
 
       - name: Cache Buildozer global dir
         uses: actions/cache@v4
         with:
-          path: ~/.buildozer
+          path: |
+            ~/.buildozer
+            .buildozer
           key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
 
       - name: Build debug APK
@@ -82,13 +96,22 @@ jobs:
           ANDROIDAPI: "33"
           ANDROIDMINAPI: "24"
         run: |
-          # التأكد من إعداد المسارات قبل التشغيل
-          export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH
           yes | buildozer -v android debug
 
       - name: Upload APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: visualassist-debug-apk
           path: bin/*.apk
-          if-no-files-found: error
+          if-no-files-found: warn
+
+      - name: Upload Buildozer logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildozer-logs
+          path: |
+            .buildozer/**/*.log
+            ~/.buildozer/**/*.log
+          if-no-files-found: ignore
