@@ -18,6 +18,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # إضافة مساحة تبديل لمنع خطأ Broken pipe
+      - name: Create Swap Space
+        run: |
+          sudo swapoff -a
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
